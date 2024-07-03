@@ -154,4 +154,4 @@ class db_table:
     # Close the database connection
     #
     def close(self):
-        self.db_conn()
+        self.db_conn.close()
