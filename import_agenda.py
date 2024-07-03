@@ -74,6 +74,11 @@ def store_parsed_content():
                 # Insert each speaker into speakers table with corresponding subsession_id
                 speakers.insert({"session_id": None, "subsession_id": subsession_count, "speaker": s})
 
+    # Close all connections
+    speakers.close()
+    sessions.close()
+    subsessions.close()
+
 
 if __name__ == "__main__":
     store_parsed_content()
