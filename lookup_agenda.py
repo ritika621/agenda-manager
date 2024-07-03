@@ -4,10 +4,10 @@ import import_agenda
 import textwrap
 
 
-# Create a new table by performing an inner join with sessions and speakers
+# Create a new table by performing a left join with sessions and speakers
 query = "CREATE TABLE IF NOT EXISTS sessions_results AS SELECT sessions.*, GROUP_CONCAT(speakers.speaker, ', ') AS speaker FROM sessions LEFT JOIN speakers ON sessions.session_id = speakers.session_id GROUP BY sessions.session_id;"
 sessions_results = import_agenda.sessions.execute_query(True, query, ['session_id','date', 'time_start', 'time_end', 'title', 'location', 'description', 'speaker'])
-   
+
 # Create a new table by performing an inner join with subsessions and speakers
 query = "CREATE TABLE IF NOT EXISTS subsessions_results AS SELECT subsessions.*, GROUP_CONCAT(speakers.speaker, ', ') AS speaker FROM subsessions LEFT JOIN speakers ON subsessions.subsession_id = speakers.subsession_id GROUP BY subsessions.subsession_id;"
 subsessions_results = import_agenda.subsessions.execute_query(True, query, ['subsession_id', 'session_id', 'date', 'time_start', 'time_end', 'title', 'location', 'description', 'speaker'])
@@ -18,7 +18,8 @@ def parse_arguments():
     parser.add_argument("column", type=str, help="column name to lookup")
     parser.add_argument("value", type=str, nargs=argparse.REMAINDER, help="value to lookup")
     args = parser.parse_args()
-    
+    args.value = ' '.join(args.value)
+
     # Format the value if it is date or time to search through database
     if (args.column == 'time_start' or args.column == 'time_end'):
        args.value =  datetime.strptime(args.value, '%I:%M %p').strftime('%H:%M:%S')
@@ -64,9 +65,10 @@ def retrieve_records():
 
     # Close all connections
     import_agenda.sessions.close()
+    import_agenda.subsessions.close()
     combined_results.close() 
-    subsessions_results.close()
     sessions_results.close()
+    subsessions_results.close()
 
     return all_sessions
 
