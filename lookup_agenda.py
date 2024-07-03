@@ -3,137 +3,86 @@ from datetime import datetime
 import import_agenda
 import textwrap
 
+
+# Create a new table by performing an inner join with sessions and speakers
+query = "CREATE TABLE IF NOT EXISTS sessions_results AS SELECT sessions.*, GROUP_CONCAT(speakers.speaker, ', ') AS speaker FROM sessions LEFT JOIN speakers ON sessions.session_id = speakers.session_id GROUP BY sessions.session_id;"
+sessions_results = import_agenda.sessions.execute_query(True, query, ['session_id','date', 'time_start', 'time_end', 'title', 'location', 'description', 'speaker'])
+   
+# Create a new table by performing an inner join with subsessions and speakers
+query = "CREATE TABLE IF NOT EXISTS subsessions_results AS SELECT subsessions.*, GROUP_CONCAT(speakers.speaker, ', ') AS speaker FROM subsessions LEFT JOIN speakers ON subsessions.subsession_id = speakers.subsession_id GROUP BY subsessions.subsession_id;"
+subsessions_results = import_agenda.subsessions.execute_query(True, query, ['subsession_id', 'session_id', 'date', 'time_start', 'time_end', 'title', 'location', 'description', 'speaker'])
+
 # Parse command line arguments and return the required column and value 
-def parseArguments(): 
+def parse_arguments(): 
     parser = argparse.ArgumentParser(description="lookup conditions")
     parser.add_argument("column", type=str, help="column name to lookup")
     parser.add_argument("value", type=str, nargs=argparse.REMAINDER, help="value to lookup")
     args = parser.parse_args()
-    args.value =  ' '.join(args.value)
     
-    # Format the value if it is date or time 
+    # Format the value if it is date or time to search through database
     if (args.column == 'time_start' or args.column == 'time_end'):
        args.value =  datetime.strptime(args.value, '%I:%M %p').strftime('%H:%M:%S')
     if(args.column == 'date'):
         args.value = datetime.strptime(args.value, '%m/%d/%Y').strftime('%Y-%m-%d') 
 
+    args.value = args.value.replace("'", "''")
     return args.column, args.value
 
 
 # Retrieve records that match the lookup conditions provided (column and value)
-def retrieveRecords(data):
-    column, value = parseArguments()
-
-    # If looking for a speaker, retrieve session ids and subsession ids of the required speaker from the speakers table
-    if (column == "speaker"):
-        speakersResult = import_agenda.speakers.select(['session_id', 'subsession_id', 'speaker'], {column: value})
-        # retrieve all the unique session ids and subsession ids with the speaker
-        session_ids = list({sp["session_id"] for sp in speakersResult if "session_id" in sp})
-        subsession_ids = list({sp["subsession_id"] for sp in speakersResult if "subsession_id" in sp})
-        sessionsResult = []
-        subsessionsResult = []
-
-        # Retrieve all sessions with the speaker
-        for id in session_ids:
-            session = import_agenda.sessions.select(['session_id','date', 'time_start', 'time_end', 'title', 'location', 'description'], {"session_id": id})
-            sessionsResult += session
-
-        # Retrieve all subsessions with the speaker 
-        for id in subsession_ids:
-            subsession = import_agenda.subsessions.select(['subsession_id','date', 'time_start', 'time_end', 'title', 'location', 'description'], {"subsession_id": id})
-            subsessionsResult += subsession
-              
+def retrieve_records():
+    column, value = parse_arguments()
+   
+    # Create a new table that matches every session and subsession to the column and value and checks for the subsessions of every matched session
+    if (column == 'speaker'):
+        query = "CREATE TABLE IF NOT EXISTS all_sessions AS SELECT NULL AS subsession_id, sessions_results.*, NULL AS type FROM sessions_results WHERE " + column +  " LIKE '%" + value + "%' UNION ALL SELECT subsessions_results.*, NULL AS type  FROM subsessions_results WHERE session_id IN (SELECT session_id FROM sessions_results WHERE " + column + " LIKE '%" + value + "%') OR " + column +  " LIKE '%" + value + "%';"
     else:
-        # Retrieve all matching records from sessions and subsessions
-        sessionsResult = import_agenda.sessions.select(['session_id','date', 'time_start', 'time_end', 'title', 'location', 'description'], {column: value})
-        subsessionsResult = import_agenda.subsessions.select(['subsession_id','date', 'time_start', 'time_end', 'title', 'location', 'description'], {column: value})
+        query = "CREATE TABLE IF NOT EXISTS all_sessions AS SELECT NULL AS subsession_id, sessions_results.*, NULL AS type FROM sessions_results WHERE " + column +  " = '" + value + "' UNION ALL SELECT subsessions_results.*, NULL AS type  FROM subsessions_results WHERE session_id IN (SELECT session_id FROM sessions_results WHERE " +  column +  " = '" + value + "') OR " + column +  " = '" + value + "';"
+    combined_results = sessions_results.execute_query(True, query, ['subsession_id', 'session_id', 'date', 'time_start', 'time_end', 'title', 'location', 'description', 'speaker', 'type'])
     
-    allSubsessions = []
-    relatedSubsessions = []
+    # Update type for a session or a Subsession of a matched Session
+    query = "UPDATE all_sessions SET type = 'Session' WHERE subsession_id IS NULL;"
+    all_sessions = combined_results.execute_query(False, query, ['subsession_id', 'session_id', 'date', 'time_start', 'time_end', 'title', 'location', 'description', 'speaker', 'type'])
+  
+    # Update type for subsessions of matched sessions
+    query = "UPDATE all_sessions SET type = 'Subsession of ' || (SELECT title FROM all_sessions AS s WHERE s.session_id = all_sessions.session_id AND s.subsession_id IS NULL) WHERE subsession_id IS NOT NULL;"
+    all_sessions = combined_results.execute_query(False, query, ['subsession_id', 'session_id', 'date', 'time_start', 'time_end', 'title', 'location', 'description', 'speaker', 'type'])
 
-    # Iterate through every matched session to include all its subsessions and to retrieve the correspodning speakers
-    for result in sessionsResult:
-        id = result['session_id']
+    # Update type for matched subsessions
+    query = "UPDATE all_sessions SET type = 'Subsession' WHERE subsession_id IS NOT NULL AND session_id NOT IN (SELECT session_id FROM all_sessions WHERE subsession_id IS NULL);"
+    all_sessions = combined_results.execute_query(False, query, ['subsession_id', 'session_id', 'date', 'time_start', 'time_end', 'title', 'location', 'description', 'speaker', 'type'])
+    
+    all_sessions = combined_results.select()
 
-        # Convert time and data values from DATE and TIME types back to input format (HH:MM AM/PM) and (MM/DD/YYYY)
-        startTime = result['time_start']
-        result['time_start'] = datetime.strptime(startTime, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
-        endTime = result['time_end']
-        result['time_end'] = datetime.strptime(endTime, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
-        resultDate = result['date']
-        result['date'] = datetime.strptime(resultDate, "%Y-%m-%d").strftime("%m/%d/%Y")
+    # Delete all_sessions as it is a temporary table and will change everytime we run this file
+    query = "DROP TABLE all_sessions"
+    combined_results.execute_query(False, query, ['subsession_id', 'session_id', 'date', 'time_start', 'time_end', 'title', 'location', 'description', 'speaker'])
+    
+    # Format each matched record
+    for dict in all_sessions:
+       format_data(dict)
 
-        # Retrieve all the speakers for the session, separate them with commas and add them to the session data
-        relatedSpeakers = import_agenda.speakers.select(['speaker'], {'session_id': id})
-        speakers_list = []
-        for item in relatedSpeakers:
-            speakers_list.append(item['speaker'])
-        speakers_string = ', '.join(speakers_list)
-        relatedSpeakers = {'speakers': speakers_string}
-        result.update(relatedSpeakers)
-        result.update({'type': "Session"})
-        data.append(formatData(result))
-        
+    # Close all connections
+    import_agenda.sessions.close()
+    combined_results.close() 
+    subsessions_results.close()
+    sessions_results.close()
 
-        # Retrieve all the subsessions for the matched session
-        relatedSubsessions = import_agenda.subsessions.select(['subsession_id','date', 'time_start', 'time_end', 'title', 'location', 'description'], {'session_id': id})
-        title = result['title']
-        # Iterate through every subsession to update the time and date formats and retrieve the corresponding speakers
-        for result in relatedSubsessions:
-            allSubsessions.append(result)
-            id = result['subsession_id']
-            # Convert time and data values from DATE and TIME types back to input format (HH:MM AM/PM) and (MM/DD/YYYY)
-            startTime = result['time_start']
-            result['time_start'] = datetime.strptime(startTime, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
-            endTime = result['time_end']
-            result['time_end'] = datetime.strptime(endTime, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
-            resultDate = result['date']
-            result['date'] = datetime.strptime(resultDate, "%Y-%m-%d").strftime("%m/%d/%Y")
+    return all_sessions
 
-            # Retrieve all the speakers for the subsessions, separate them with commas and add them to the subsession data
-            relatedSpeakers = import_agenda.speakers.select(['speaker'], {'subsession_id': id})
-            speakers_list = []
-            for item in relatedSpeakers:
-                speakers_list.append(item['speaker'])
-            speakers_string = ', '.join(speakers_list)
-            relatedSpeakers = {'speakers': speakers_string}
-            result.update(relatedSpeakers)
-            result.update({'type': "Subsession of " + title})
-            data.append(formatData(result))
 
-    # Iterate through the matched subsessions to update the time and date formats and retrieve the corresponding speakers
-    for result in subsessionsResult:
-        # Only add the subsession to the final output if it is not already included from the subsessions of the matched sessions
-        if (result not in allSubsessions):
-            id = result['subsession_id']
-
-            # Convert time and data values from DATE and TIME types back to input format (HH:MM AM/PM) and (MM/DD/YYYY)
-            startTime = result['time_start']
-            result['time_start'] = datetime.strptime(startTime, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
-            endTime = result['time_end']
-            result['time_end'] = datetime.strptime(endTime, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
-            resultDate = result['date']
-            result['date'] = datetime.strptime(resultDate, "%Y-%m-%d").strftime("%m/%d/%Y")
-
-            # Retrieve all the speakers for the session, separate them with commas and add them to the session data
-            relatedSpeakers = import_agenda.speakers.select(['speaker'], {'subsession_id': id})
-            speakers_list = []
-            for item in relatedSpeakers:
-                speakers_list.append(item['speaker'])
-            speakers_string = ', '.join(speakers_list)
-            relatedSpeakers = {'speakers': speakers_string}
-            result.update(relatedSpeakers)
-            result.update({'type': "Subsession"})
-            data.append(formatData(result))
-
-# Remove session_id and subsession_id from final output
-def formatData(dict):
+# Remove session_id and subsession_id from final output and convert date and time type data back into the input format
+def format_data(dict):
     dict.pop('session_id', None)
     dict.pop('subsession_id', None)
+    dict['time_start'] = datetime.strptime(dict['time_start'], "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
+    dict['time_end'] = datetime.strptime( dict['time_end'], "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
+    dict['date'] = datetime.strptime(dict['date'], "%Y-%m-%d").strftime("%m/%d/%Y")
     return dict
 
-def printResults(data):
-    #Define widths for each field's column in output
+
+def print_results(data):
+    # Define widths for each field's column in output
     colWidths = {
         "date": 12,
         "time_start": 10,
@@ -141,18 +90,19 @@ def printResults(data):
         "title": 25,
         "location": 20,
         "description": 30,
-        "speakers": 15,
+        "speaker": 15,
         "type": 10
     }
 
     # Define header with the column names and print
-    header = f"{'date'.ljust(colWidths['date'])} | {'time_start'.ljust(colWidths['time_start'])} | {'time_end'.ljust(colWidths['time_end'])} | {'title'.ljust(colWidths['title'])} | {'location'.ljust(colWidths['location'])} | {'description'.ljust(colWidths['description'])} | {'speakers'.ljust(colWidths['speakers'])} | {'type'.ljust(colWidths['type'])}"
+    header = f"{'date'.ljust(colWidths['date'])} | {'time_start'.ljust(colWidths['time_start'])} | {'time_end'.ljust(colWidths['time_end'])} | {'title'.ljust(colWidths['title'])} | {'location'.ljust(colWidths['location'])} | {'description'.ljust(colWidths['description'])} | {'speaker'.ljust(colWidths['speaker'])} | {'type'.ljust(colWidths['type'])}"
     print(header)   
     print("-" * len(header))
 
 # Print each data row
     for row in data:
         formatRow(row, colWidths, header)
+
 
 # Function to format a row
 def formatRow(row, colWidths, header):
@@ -170,7 +120,11 @@ def formatRow(row, colWidths, header):
             print(line)
         print("-" * len(header))
 
+
 if __name__ == "__main__":
     data = []
-    retrieveRecords(data)
-    printResults(data)
+    data = retrieve_records()
+    if (len(data) > 0) :
+        print_results(data)
+    else:
+        print("No matched results")
