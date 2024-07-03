@@ -150,8 +150,36 @@ class db_table:
         self.db_conn.commit()
         return cursor.rowcount
 
+    def execute_query(self, create, query, columns = []):
+        if create:
+            self.create_table_from_select(query)
+            # Extract the table name from the query
+            table_name = query.split()[5]
+            # Returns db_table instance
+            return db_table(table_name, {col: 'TEXT' for col in columns})
+        else:
+            cursor = self.db_conn.cursor()
+            cursor.execute(query)
+            self.db_conn.commit()
+            results = cursor.fetchall()
+            cursor.close()
+            formatted_results = []
+            for row in results:
+                result_row = {}
+                # convert from (val1, val2, val3) to { col1: val1, col2: val2, col3: val3 }
+                for i in range(0, len(columns)):
+                    result_row[columns[i]] = row[i]
+                formatted_results.append(result_row)
+            return formatted_results
+    
+
+    def create_table_from_select(self, query):
+        self.db_conn.execute(query)
+        self.db_conn.commit()
+        
+
     #
     # Close the database connection
     #
     def close(self):
-        self.db_conn()
+        self.db_conn.close()
