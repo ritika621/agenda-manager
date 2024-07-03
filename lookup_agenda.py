@@ -14,127 +14,133 @@ def parseArguments():
     # Format the value if it is date or time 
     if (args.column == 'time_start' or args.column == 'time_end'):
        args.value =  datetime.strptime(args.value, '%I:%M %p').strftime('%H:%M:%S')
-    if(args.column == 'date'):
+    if (args.column == 'date'):
         args.value = datetime.strptime(args.value, '%m/%d/%Y').strftime('%Y-%m-%d') 
 
+    args.value = args.value.replace("'", "''")
     return args.column, args.value
 
 
 # Retrieve records that match the lookup conditions provided (column and value)
-def retrieveRecords(data):
+def retrieve_records(data):
     column, value = parseArguments()
 
     # If looking for a speaker, retrieve session ids and subsession ids of the required speaker from the speakers table
     if (column == "speaker"):
-        speakersResult = import_agenda.speakers.select(['session_id', 'subsession_id', 'speaker'], {column: value})
-        # retrieve all the unique session ids and subsession ids with the speaker
-        session_ids = list({sp["session_id"] for sp in speakersResult if "session_id" in sp})
-        subsession_ids = list({sp["subsession_id"] for sp in speakersResult if "subsession_id" in sp})
-        sessionsResult = []
-        subsessionsResult = []
+        speakers_result = import_agenda.speakers.select(['session_id', 'subsession_id', 'speaker'], {column: value})
+        # Retrieve all the unique session ids and subsession ids with the speaker
+        session_ids = list({sp["session_id"] for sp in speakers_result if "session_id" in sp})
+        subsession_ids = list({sp["subsession_id"] for sp in speakers_result if "subsession_id" in sp})
+        sessions_result = []
+        subsessions_result = []
 
         # Retrieve all sessions with the speaker
         for id in session_ids:
             session = import_agenda.sessions.select(['session_id','date', 'time_start', 'time_end', 'title', 'location', 'description'], {"session_id": id})
-            sessionsResult += session
+            sessions_result += session
 
         # Retrieve all subsessions with the speaker 
         for id in subsession_ids:
             subsession = import_agenda.subsessions.select(['subsession_id','date', 'time_start', 'time_end', 'title', 'location', 'description'], {"subsession_id": id})
-            subsessionsResult += subsession
+            subsessions_result += subsession
               
     else:
         # Retrieve all matching records from sessions and subsessions
-        sessionsResult = import_agenda.sessions.select(['session_id','date', 'time_start', 'time_end', 'title', 'location', 'description'], {column: value})
-        subsessionsResult = import_agenda.subsessions.select(['subsession_id','date', 'time_start', 'time_end', 'title', 'location', 'description'], {column: value})
+        sessions_result = import_agenda.sessions.select(['session_id','date', 'time_start', 'time_end', 'title', 'location', 'description'], {column: value})
+        subsessions_result = import_agenda.subsessions.select(['subsession_id','date', 'time_start', 'time_end', 'title', 'location', 'description'], {column: value})
     
-    allSubsessions = []
-    relatedSubsessions = []
+    all_subsessions = []
+    related_subsessions = []
 
     # Iterate through every matched session to include all its subsessions and to retrieve the correspodning speakers
-    for result in sessionsResult:
+    for result in sessions_result:
         id = result['session_id']
 
         # Convert time and data values from DATE and TIME types back to input format (HH:MM AM/PM) and (MM/DD/YYYY)
-        startTime = result['time_start']
-        result['time_start'] = datetime.strptime(startTime, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
-        endTime = result['time_end']
-        result['time_end'] = datetime.strptime(endTime, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
-        resultDate = result['date']
-        result['date'] = datetime.strptime(resultDate, "%Y-%m-%d").strftime("%m/%d/%Y")
+        start_time = result['time_start']
+        result['time_start'] = datetime.strptime(start_time, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
+        end_time = result['time_end']
+        result['time_end'] = datetime.strptime(end_time, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
+        result_date = result['date']
+        result['date'] = datetime.strptime(result_date, "%Y-%m-%d").strftime("%m/%d/%Y")
 
         # Retrieve all the speakers for the session, separate them with commas and add them to the session data
-        relatedSpeakers = import_agenda.speakers.select(['speaker'], {'session_id': id})
+        related_speakers = import_agenda.speakers.select(['speaker'], {'session_id': id})
         speakers_list = []
-        for item in relatedSpeakers:
+        for item in related_speakers:
             speakers_list.append(item['speaker'])
         speakers_string = ', '.join(speakers_list)
-        relatedSpeakers = {'speakers': speakers_string}
-        result.update(relatedSpeakers)
+        related_speakers = {'speakers': speakers_string}
+        result.update(related_speakers)
         result.update({'type': "Session"})
-        data.append(formatData(result))
+        data.append(format_data(result))
         
 
         # Retrieve all the subsessions for the matched session
-        relatedSubsessions = import_agenda.subsessions.select(['subsession_id','date', 'time_start', 'time_end', 'title', 'location', 'description'], {'session_id': id})
+        related_subsessions = import_agenda.subsessions.select(['subsession_id','date', 'time_start', 'time_end', 'title', 'location', 'description'], {'session_id': id})
         title = result['title']
         # Iterate through every subsession to update the time and date formats and retrieve the corresponding speakers
-        for result in relatedSubsessions:
-            allSubsessions.append(result)
+        for result in related_subsessions:
+            all_subsessions.append(result)
             id = result['subsession_id']
             # Convert time and data values from DATE and TIME types back to input format (HH:MM AM/PM) and (MM/DD/YYYY)
-            startTime = result['time_start']
-            result['time_start'] = datetime.strptime(startTime, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
-            endTime = result['time_end']
-            result['time_end'] = datetime.strptime(endTime, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
-            resultDate = result['date']
-            result['date'] = datetime.strptime(resultDate, "%Y-%m-%d").strftime("%m/%d/%Y")
+            start_time = result['time_start']
+            result['time_start'] = datetime.strptime(start_time, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
+            end_time = result['time_end']
+            result['time_end'] = datetime.strptime(end_time, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
+            result_date = result['date']
+            result['date'] = datetime.strptime(result_date, "%Y-%m-%d").strftime("%m/%d/%Y")
 
             # Retrieve all the speakers for the subsessions, separate them with commas and add them to the subsession data
-            relatedSpeakers = import_agenda.speakers.select(['speaker'], {'subsession_id': id})
+            related_speakers = import_agenda.speakers.select(['speaker'], {'subsession_id': id})
             speakers_list = []
-            for item in relatedSpeakers:
+            for item in related_speakers:
                 speakers_list.append(item['speaker'])
             speakers_string = ', '.join(speakers_list)
-            relatedSpeakers = {'speakers': speakers_string}
-            result.update(relatedSpeakers)
+            related_speakers = {'speakers': speakers_string}
+            result.update(related_speakers)
             result.update({'type': "Subsession of " + title})
-            data.append(formatData(result))
+            data.append(format_data(result))
 
     # Iterate through the matched subsessions to update the time and date formats and retrieve the corresponding speakers
-    for result in subsessionsResult:
+    for result in subsessions_result:
         # Only add the subsession to the final output if it is not already included from the subsessions of the matched sessions
-        if (result not in allSubsessions):
+        if (result not in all_subsessions):
             id = result['subsession_id']
 
             # Convert time and data values from DATE and TIME types back to input format (HH:MM AM/PM) and (MM/DD/YYYY)
-            startTime = result['time_start']
-            result['time_start'] = datetime.strptime(startTime, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
-            endTime = result['time_end']
-            result['time_end'] = datetime.strptime(endTime, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
-            resultDate = result['date']
-            result['date'] = datetime.strptime(resultDate, "%Y-%m-%d").strftime("%m/%d/%Y")
+            start_time = result['time_start']
+            result['time_start'] = datetime.strptime(start_time, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
+            end_time = result['time_end']
+            result['time_end'] = datetime.strptime(end_time, "%H:%M:%S").strftime("%I:%M %p").lstrip("0").replace(" 0", " ")
+            result_date = result['date']
+            result['date'] = datetime.strptime(result_date, "%Y-%m-%d").strftime("%m/%d/%Y")
 
             # Retrieve all the speakers for the session, separate them with commas and add them to the session data
-            relatedSpeakers = import_agenda.speakers.select(['speaker'], {'subsession_id': id})
+            related_speakers = import_agenda.speakers.select(['speaker'], {'subsession_id': id})
             speakers_list = []
-            for item in relatedSpeakers:
+            for item in related_speakers:
                 speakers_list.append(item['speaker'])
             speakers_string = ', '.join(speakers_list)
-            relatedSpeakers = {'speakers': speakers_string}
-            result.update(relatedSpeakers)
+            related_speakers = {'speakers': speakers_string}
+            result.update(related_speakers)
             result.update({'type': "Subsession"})
-            data.append(formatData(result))
+            data.append(format_data(result))
+    
+    #Close all connections
+    import_agenda.speakers.close()
+    import_agenda.sessions.close()
+    import_agenda.subsessions.close()
 
 # Remove session_id and subsession_id from final output
-def formatData(dict):
+def format_data(dict):
     dict.pop('session_id', None)
     dict.pop('subsession_id', None)
     return dict
 
-def printResults(data):
+def print_results(data):
     #Define widths for each field's column in output
-    colWidths = {
+    col_widths = {
         "date": 12,
         "time_start": 10,
         "time_end": 10,
@@ -146,31 +152,34 @@ def printResults(data):
     }
 
     # Define header with the column names and print
-    header = f"{'date'.ljust(colWidths['date'])} | {'time_start'.ljust(colWidths['time_start'])} | {'time_end'.ljust(colWidths['time_end'])} | {'title'.ljust(colWidths['title'])} | {'location'.ljust(colWidths['location'])} | {'description'.ljust(colWidths['description'])} | {'speakers'.ljust(colWidths['speakers'])} | {'type'.ljust(colWidths['type'])}"
+    header = f"{'date'.ljust(col_widths['date'])} | {'time_start'.ljust(col_widths['time_start'])} | {'time_end'.ljust(col_widths['time_end'])} | {'title'.ljust(col_widths['title'])} | {'location'.ljust(col_widths['location'])} | {'description'.ljust(col_widths['description'])} | {'speakers'.ljust(col_widths['speakers'])} | {'type'.ljust(col_widths['type'])}"
     print(header)   
     print("-" * len(header))
 
 # Print each data row
     for row in data:
-        formatRow(row, colWidths, header)
+        format_row(row, col_widths, header)
 
 # Function to format a row
-def formatRow(row, colWidths, header):
+def format_row(row, col_widths, header):
         #  Wrap the content in each column to the specified width
-        wrappedColumns = {key: textwrap.wrap(str(value), width = colWidths[key]) for key, value in row.items()}
-        maxLines = max(len(v) for v in wrappedColumns.values())
+        wrapped_columns = {key: textwrap.wrap(str(value), width = col_widths[key]) for key, value in row.items()}
+        max_lines = max(len(v) for v in wrapped_columns.values())
     
         # Print each line of the row with columns appropriately aligned
-        for i in range(maxLines):
-            lineParts = []
-            for key in colWidths.keys():
-                value_lines = wrappedColumns.get(key, [])
-                lineParts.append(value_lines[i] if i < len(value_lines) else "")
-            line = " | ".join(part.ljust(colWidths[key]) for key, part in zip(colWidths.keys(), lineParts))
+        for i in range(max_lines):
+            line_parts = []
+            for key in col_widths.keys():
+                value_lines = wrapped_columns.get(key, [])
+                line_parts.append(value_lines[i] if i < len(value_lines) else "")
+            line = " | ".join(part.ljust(col_widths[key]) for key, part in zip(col_widths.keys(), line_parts))
             print(line)
         print("-" * len(header))
 
 if __name__ == "__main__":
     data = []
-    retrieveRecords(data)
-    printResults(data)
+    retrieve_records(data)
+    if (len(data) > 0) :
+        print_results(data)
+    else:
+        print("No matched results")
